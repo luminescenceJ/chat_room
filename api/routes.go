@@ -53,7 +53,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, rdb *redis.Client, wsManager *se
 		api.PUT("/groups/:id", groupController.UpdateGroup)
 		api.DELETE("/groups/:id", groupController.DeleteGroup)
 		api.POST("/groups/:id/members", groupController.AddMember)
-		api.DELETE("/groups/:id/members/:userId", groupController.RemoveMember)
+		//api.DELETE("/groups/:id/members/:userId", groupController.RemoveMember)
 
 		// WebSocket
 		api.GET("/ws", wsController.HandleWebSocket)
