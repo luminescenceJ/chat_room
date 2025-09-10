@@ -1,0 +1,55 @@
+# 编译输出
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+chatroom
+chatroom.exe
+
+# 测试文件
+*.test
+
+# 输出目录
+/dist/
+/build/
+
+# 依赖目录
+/vendor/
+
+# Go 工作空间文件
+go.work
+
+# 环境变量文件
+.env
+
+# 日志文件
+*.log
+
+# IDE 文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.temp
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 配置文件（如果包含敏感信息）
+config.local.json

@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -67,6 +69,8 @@ func ParseToken(tokenString string) (*JWTClaims, error) {
 // JWTAuth JWT认证中间件
 func JWTAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		fmt.Println(c.Request.Header.Get("Authorization"))
+		log.Printf("%s", c.Request.URL.Path)
 		// 跳过不需要认证的路由
 		if skipAuth(c.Request.URL.Path) {
 			c.Next()
@@ -109,13 +113,13 @@ func JWTAuth() gin.HandlerFunc {
 func skipAuth(path string) bool {
 	// 不需要认证的路径列表
 	noAuthPaths := []string{
-		"/api/auth/login",
-		"/api/auth/register",
-		"/api/health",
+		"/api/login",
+		"/api/register",
+		"/api/monitor",
 	}
 
 	for _, p := range noAuthPaths {
-		if path == p {
+		if strings.HasPrefix(path, p) {
 			return true
 		}
 	}

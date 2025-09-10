@@ -11,12 +11,13 @@ import (
 
 // GroupService 群组服务
 type GroupService struct {
-	DB *gorm.DB
+	DB          *gorm.DB
+	userService *UserService
 }
 
 // NewGroupService 创建群组服务实例
-func NewGroupService(db *gorm.DB) *GroupService {
-	return &GroupService{DB: db}
+func NewGroupService(db *gorm.DB, userService *UserService) *GroupService {
+	return &GroupService{DB: db, userService: userService}
 }
 
 // CreateGroup 创建新群组
@@ -112,14 +113,6 @@ func (s *GroupService) GetGroupResponse(id uint, includeMembers bool) (*models.G
 			return nil, err
 		}
 
-		// 获取在线用户ID集合
-		onlineUserIDs := make(map[uint]bool)
-		GlobalHub.mu.RLock()
-		for id := range GlobalHub.clients {
-			onlineUserIDs[id] = true
-		}
-		GlobalHub.mu.RUnlock()
-
 		// 构建成员响应
 		memberResponses := make([]models.UserResponse, len(members))
 		for i, member := range members {
@@ -128,7 +121,7 @@ func (s *GroupService) GetGroupResponse(id uint, includeMembers bool) (*models.G
 				Username: member.Username,
 				Email:    member.Email,
 				Avatar:   member.Avatar,
-				Online:   onlineUserIDs[member.ID],
+				Online:   s.userService.IsUserOnline(member.ID),
 			}
 		}
 
@@ -178,6 +171,104 @@ func (s *GroupService) GetUserGroups(userID uint) ([]models.GroupResponse, error
 	}
 
 	return responses, nil
+}
+
+// AddMember 添加群组成员（管理员权限）
+func (s *GroupService) AddMember(groupID, operatorID, targetUserID uint) error {
+	// 检查群组是否存在
+	group, err := s.GetGroupByID(groupID)
+	if err != nil {
+		return err
+	}
+
+	// 检查操作者是否有权限（创建者或管理员）
+	var isAdmin bool
+	err = s.DB.Model(&models.GroupMember{}).
+		Select("is_admin").
+		Where("group_id = ? AND user_id = ?", groupID, operatorID).
+		First(&isAdmin).Error
+
+	if err != nil {
+		return errors.New("操作者不是群组成员")
+	}
+
+	if !isAdmin && group.CreatorID != operatorID {
+		return errors.New("没有权限添加成员")
+	}
+
+	// 检查目标用户是否已在群组中
+	var count int64
+	if err := s.DB.Model(&models.GroupMember{}).
+		Where("group_id = ? AND user_id = ?", groupID, targetUserID).
+		Count(&count).Error; err != nil {
+		return err
+	}
+
+	if count > 0 {
+		return errors.New("用户已经是群组成员")
+	}
+
+	// 添加成员
+	groupMember := models.GroupMember{
+		GroupID:  groupID,
+		UserID:   targetUserID,
+		JoinedAt: time.Now(),
+		IsAdmin:  false,
+	}
+
+	if err := s.DB.Create(&groupMember).Error; err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// RemoveMember 移除群组成员（管理员权限）
+func (s *GroupService) RemoveMember(groupID, operatorID, targetUserID uint) error {
+	// 检查群组是否存在
+	group, err := s.GetGroupByID(groupID)
+	if err != nil {
+		return err
+	}
+
+	// 检查操作者是否有权限（创建者或管理员）
+	var isAdmin bool
+	err = s.DB.Model(&models.GroupMember{}).
+		Select("is_admin").
+		Where("group_id = ? AND user_id = ?", groupID, operatorID).
+		First(&isAdmin).Error
+
+	if err != nil {
+		return errors.New("操作者不是群组成员")
+	}
+
+	if !isAdmin && group.CreatorID != operatorID {
+		return errors.New("没有权限移除成员")
+	}
+
+	// 不能移除群组创建者
+	if group.CreatorID == targetUserID {
+		return errors.New("不能移除群组创建者")
+	}
+
+	// 检查目标用户是否在群组中
+	var count int64
+	if err := s.DB.Model(&models.GroupMember{}).
+		Where("group_id = ? AND user_id = ?", groupID, targetUserID).
+		Count(&count).Error; err != nil {
+		return err
+	}
+
+	if count == 0 {
+		return errors.New("用户不是群组成员")
+	}
+
+	// 移除成员
+	if err := s.DB.Where("group_id = ? AND user_id = ?", groupID, targetUserID).Delete(&models.GroupMember{}).Error; err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // UpdateGroup 更新群组信息
@@ -373,14 +464,6 @@ func (s *GroupService) GetGroupMembers(groupID uint) ([]models.UserResponse, err
 		return nil, err
 	}
 
-	// 获取在线用户ID集合
-	onlineUserIDs := make(map[uint]bool)
-	GlobalHub.mu.RLock()
-	for id := range GlobalHub.clients {
-		onlineUserIDs[id] = true
-	}
-	GlobalHub.mu.RUnlock()
-
 	// 获取管理员信息
 	adminMap := make(map[uint]bool)
 	var admins []struct {
@@ -405,7 +488,7 @@ func (s *GroupService) GetGroupMembers(groupID uint) ([]models.UserResponse, err
 			Username: member.Username,
 			Email:    member.Email,
 			Avatar:   member.Avatar,
-			Online:   onlineUserIDs[member.ID],
+			Online:   s.userService.IsUserOnline(member.ID),
 		}
 	}
 

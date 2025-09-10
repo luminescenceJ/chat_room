@@ -12,9 +12,9 @@ import (
 func RegisterRoutes(r *gin.Engine, db *gorm.DB, rdb *redis.Client, wsManager *services.WebSocketManager) {
 	// 创建服务
 	userService := services.NewUserService(db, rdb)
-	messageService := services.NewMessageService(db, rdb)
-	groupService := services.NewGroupService(db)
-	kafkaService := wsManager.GetKafkaService()
+	kafkaService := wsManager.GetKafkaService() // 可能为 nil
+	messageService := services.NewMessageService(db, rdb, userService, kafkaService)
+	groupService := services.NewGroupService(db, userService)
 
 	// 创建控制器
 	authController := NewAuthController(userService)
@@ -53,7 +53,7 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB, rdb *redis.Client, wsManager *se
 		api.PUT("/groups/:id", groupController.UpdateGroup)
 		api.DELETE("/groups/:id", groupController.DeleteGroup)
 		api.POST("/groups/:id/members", groupController.AddMember)
-		//api.DELETE("/groups/:id/members/:userId", groupController.RemoveMember)
+		api.DELETE("/groups/:id/members/:userId", groupController.RemoveMember)
 
 		// WebSocket
 		api.GET("/ws", wsController.HandleWebSocket)

@@ -17,50 +17,55 @@ import (
 
 const (
 	// Redis键名
-	keyOnlineUsers = "chat:online_users"
+	keyOnlineUsers = "online_users"
 )
 
 // WebSocketManager 管理WebSocket连接和消息分发
 type WebSocketManager struct {
 	// 客户端映射表 userID -> client
 	clients map[uint]*Client
-	
+
 	// 互斥锁保护clients map
 	mu sync.RWMutex
-	
+
 	// Redis客户端（用于缓存）
 	rdb *redis.Client
-	
+
 	// Kafka服务（用于消息队列）
 	kafka *KafkaService
-	
+
 	// 消息服务
 	messageService *MessageService
-	
+
+	// 用户服务
+	UserService *UserService
+
 	// 连接计数器
 	connectionCount int32
-	
+
 	// 最大连接数
 	maxConnections int32
-	
+
 	// 停止信号
 	stopCh chan struct{}
 }
 
 // NewWebSocketManager 创建一个新的WebSocket管理器
-func NewWebSocketManager(rdb *redis.Client, messageService *MessageService) *WebSocketManager {
-	// 创建Kafka服务
+func NewWebSocketManager(rdb *redis.Client, messageService *MessageService, userService *UserService) *WebSocketManager {
+	// 创建Kafka服务（允许失败）
 	kafka, err := NewKafkaService()
 	if err != nil {
-		log.Fatalf("创建Kafka服务失败: %v", err)
+		log.Printf("警告: WebSocketManager中Kafka服务初始化失败: %v", err)
+		kafka = nil
 	}
-	
+
 	return &WebSocketManager{
 		clients:        make(map[uint]*Client),
 		mu:             sync.RWMutex{},
 		rdb:            rdb,
 		kafka:          kafka,
 		messageService: messageService,
+		UserService:    userService,
 		maxConnections: int32(config.AppConfig.MaxConnections),
 		stopCh:         make(chan struct{}),
 	}
@@ -68,28 +73,32 @@ func NewWebSocketManager(rdb *redis.Client, messageService *MessageService) *Web
 
 // Run 启动WebSocket管理器
 func (m *WebSocketManager) Run() {
-	// 订阅全局消息主题
-	err := m.kafka.SubscribeTopic(m.kafka.BuildTopicName("global", 0), func(message []byte) {
-		m.broadcastToAll(message)
-	})
-	
-	if err != nil {
-		log.Printf("订阅全局消息主题失败: %v", err)
+	if m.kafka != nil {
+		// 订阅全局消息主题
+		err := m.kafka.SubscribeTopic(m.kafka.BuildTopicName("global", 0), func(message []byte) {
+			m.broadcastToAll(message)
+		})
+
+		if err != nil {
+			log.Printf("订阅全局消息主题失败: %v", err)
+		}
+
+		// 订阅用户状态主题
+		err = m.kafka.SubscribeTopic(m.kafka.BuildTopicName("status", 0), func(message []byte) {
+			m.handleUserStatusUpdate(message)
+		})
+
+		if err != nil {
+			log.Printf("订阅用户状态主题失败: %v", err)
+		}
+	} else {
+		log.Println("Kafka服务不可用，跳过消息主题订阅")
 	}
-	
-	// 订阅用户状态主题
-	err = m.kafka.SubscribeTopic(m.kafka.BuildTopicName("status", 0), func(message []byte) {
-		m.handleUserStatusUpdate(message)
-	})
-	
-	if err != nil {
-		log.Printf("订阅用户状态主题失败: %v", err)
-	}
-	
+
 	// 定期清理过期的连接
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -103,7 +112,9 @@ func (m *WebSocketManager) Run() {
 // Stop 停止WebSocket管理器
 func (m *WebSocketManager) Stop() {
 	close(m.stopCh)
-	m.kafka.Close()
+	if m.kafka != nil {
+		m.kafka.Close()
+	}
 }
 
 // RegisterClient 注册一个新的客户端
@@ -113,26 +124,26 @@ func (m *WebSocketManager) RegisterClient(client *Client) bool {
 		log.Println("达到最大连接数限制，拒绝新连接")
 		return false
 	}
-	
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	// 如果已存在相同用户ID的连接，先关闭旧连接
 	if oldClient, exists := m.clients[client.ID]; exists {
 		close(oldClient.Send)
 		oldClient.Conn.Close()
 	}
-	
+
 	m.clients[client.ID] = client
 	atomic.AddInt32(&m.connectionCount, 1)
-	
+
 	// 将用户添加到在线用户集合
 	ctx := context.Background()
 	m.rdb.SAdd(ctx, keyOnlineUsers, client.ID)
-	
+
 	// 发布用户上线消息
 	m.publishUserStatus(client.ID, client.Username, true)
-	
+
 	log.Printf("客户端已连接: %s (ID: %d), 当前连接数: %d", client.Username, client.ID, atomic.LoadInt32(&m.connectionCount))
 	return true
 }
@@ -141,19 +152,19 @@ func (m *WebSocketManager) RegisterClient(client *Client) bool {
 func (m *WebSocketManager) UnregisterClient(client *Client) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if _, ok := m.clients[client.ID]; ok {
 		delete(m.clients, client.ID)
 		close(client.Send)
 		atomic.AddInt32(&m.connectionCount, -1)
-		
+
 		// 将用户从在线用户集合中移除
 		ctx := context.Background()
 		m.rdb.SRem(ctx, keyOnlineUsers, client.ID)
-		
+
 		// 发布用户下线消息
 		m.publishUserStatus(client.ID, client.Username, false)
-		
+
 		log.Printf("客户端已断开连接: %s (ID: %d), 当前连接数: %d", client.Username, client.ID, atomic.LoadInt32(&m.connectionCount))
 	}
 }
@@ -163,7 +174,7 @@ func (m *WebSocketManager) SendToUser(userID uint, message []byte) bool {
 	m.mu.RLock()
 	client, exists := m.clients[userID]
 	m.mu.RUnlock()
-	
+
 	if exists {
 		select {
 		case client.Send <- message:
@@ -183,22 +194,31 @@ func (m *WebSocketManager) SendToUser(userID uint, message []byte) bool {
 
 // PublishMessage 发布消息到Kafka
 func (m *WebSocketManager) PublishMessage(ctx context.Context, msgType string, message []byte, receiverID, groupID uint) {
-	err := m.kafka.PublishChatMessage(msgType, message, receiverID, groupID)
-	if err != nil {
-		log.Printf("发布消息失败: %v", err)
+	if m.kafka != nil {
+		err := m.kafka.PublishChatMessage(msgType, message, receiverID, groupID)
+		if err != nil {
+			log.Printf("发布消息失败: %v", err)
+		}
+	} else {
+		log.Printf("Kafka不可用，跳过消息发布: %s", msgType)
 	}
 }
 
 // SubscribeToUserChannel 订阅用户私聊频道
 func (m *WebSocketManager) SubscribeToUserChannel(userID uint) {
+	if m.kafka == nil {
+		log.Printf("Kafka不可用，跳过用户频道订阅: %d", userID)
+		return
+	}
+
 	topic := m.kafka.BuildTopicName("private", userID)
-	
+
 	err := m.kafka.SubscribeTopic(topic, func(message []byte) {
 		// 查找用户的客户端连接
 		m.mu.RLock()
 		client, exists := m.clients[userID]
 		m.mu.RUnlock()
-		
+
 		if exists {
 			select {
 			case client.Send <- message:
@@ -212,7 +232,7 @@ func (m *WebSocketManager) SubscribeToUserChannel(userID uint) {
 			}
 		}
 	})
-	
+
 	if err != nil {
 		log.Printf("订阅用户私聊主题失败: %v", err)
 	}
@@ -220,14 +240,19 @@ func (m *WebSocketManager) SubscribeToUserChannel(userID uint) {
 
 // SubscribeToGroupChannel 订阅群组频道
 func (m *WebSocketManager) SubscribeToGroupChannel(userID, groupID uint) {
+	if m.kafka == nil {
+		log.Printf("Kafka不可用，跳过群组频道订阅: 用户%d, 群组%d", userID, groupID)
+		return
+	}
+
 	topic := m.kafka.BuildTopicName("group", groupID)
-	
+
 	err := m.kafka.SubscribeTopic(topic, func(message []byte) {
 		// 查找用户的客户端连接
 		m.mu.RLock()
 		client, exists := m.clients[userID]
 		m.mu.RUnlock()
-		
+
 		if exists {
 			select {
 			case client.Send <- message:
@@ -236,7 +261,7 @@ func (m *WebSocketManager) SubscribeToGroupChannel(userID, groupID uint) {
 			}
 		}
 	})
-	
+
 	if err != nil {
 		log.Printf("订阅群组主题失败: %v", err)
 	}
@@ -246,7 +271,7 @@ func (m *WebSocketManager) SubscribeToGroupChannel(userID, groupID uint) {
 func (m *WebSocketManager) broadcastToAll(message []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	for _, client := range m.clients {
 		select {
 		case client.Send <- message:
@@ -263,7 +288,7 @@ func (m *WebSocketManager) publishUserStatus(userID uint, username string, onlin
 	if !online {
 		status = "offline"
 	}
-	
+
 	statusMsg := struct {
 		UserID   uint   `json:"user_id"`
 		Username string `json:"username"`
@@ -273,21 +298,23 @@ func (m *WebSocketManager) publishUserStatus(userID uint, username string, onlin
 		Username: username,
 		Status:   status,
 	}
-	
+
 	statusJSON, _ := json.Marshal(statusMsg)
-	
+
 	wsMsg := WebSocketMessage{
 		Type:      "user_status",
 		Content:   statusJSON,
 		Timestamp: time.Now(),
 	}
-	
+
 	msgJSON, _ := json.Marshal(wsMsg)
-	
+
 	// 发布到Kafka
-	err := m.kafka.PublishMessage(m.kafka.BuildTopicName("status", 0), "", msgJSON)
-	if err != nil {
-		log.Printf("发布用户状态消息失败: %v", err)
+	if m.kafka != nil {
+		err := m.kafka.PublishMessage(m.kafka.BuildTopicName("status", 0), "", msgJSON)
+		if err != nil {
+			log.Printf("发布用户状态消息失败: %v", err)
+		}
 	}
 }
 
@@ -304,25 +331,25 @@ func (m *WebSocketManager) GetOnlineUsers() []models.UserResponse {
 		log.Printf("获取在线用户失败: %v", err)
 		return []models.UserResponse{}
 	}
-	
+
 	onlineUsers := make([]models.UserResponse, 0, len(userIDs))
 	for _, idStr := range userIDs {
 		var id uint
 		json.Unmarshal([]byte(idStr), &id)
-		
+
 		// 从数据库获取用户信息
-		user, err := m.messageService.GetUserByID(id)
+		user, err := m.UserService.GetUserByID(id)
 		if err != nil {
 			continue
 		}
-		
+
 		onlineUsers = append(onlineUsers, models.UserResponse{
 			ID:       user.ID,
 			Username: user.Username,
 			Online:   true,
 		})
 	}
-	
+
 	return onlineUsers
 }
 
@@ -330,7 +357,7 @@ func (m *WebSocketManager) GetOnlineUsers() []models.UserResponse {
 func (m *WebSocketManager) cleanupExpiredConnections() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	for userID, client := range m.clients {
 		// 检查连接是否已关闭
 		if err := client.Conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(time.Second)); err != nil {
@@ -338,7 +365,7 @@ func (m *WebSocketManager) cleanupExpiredConnections() {
 			delete(m.clients, userID)
 			close(client.Send)
 			atomic.AddInt32(&m.connectionCount, -1)
-			
+
 			// 将用户从在线用户集合中移除
 			ctx := context.Background()
 			m.rdb.SRem(ctx, keyOnlineUsers, userID)
@@ -353,5 +380,5 @@ func (m *WebSocketManager) GetConnectionCount() int32 {
 
 // GetKafkaService 获取Kafka服务实例
 func (m *WebSocketManager) GetKafkaService() *KafkaService {
-	return m.kafka
+	return m.kafka // 可能为 nil
 }

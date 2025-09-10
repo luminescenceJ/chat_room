@@ -24,8 +24,9 @@ func NewWebSocketController(
 	userService *services.UserService,
 	wsManager *services.WebSocketManager,
 ) *WebSocketController {
-	messageService := services.NewMessageService(db, rdb)
-	
+	kafkaService := wsManager.GetKafkaService() // 可能为 nil
+	messageService := services.NewMessageService(db, rdb, userService, kafkaService)
+
 	return &WebSocketController{
 		UserService:    userService,
 		MessageService: messageService,
@@ -60,7 +61,7 @@ func (c *WebSocketController) handleConnection(ctx *gin.Context, userID uint, us
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "WebSocket升级失败"})
 		return
 	}
-	
+
 	// 创建客户端
 	client := &services.Client{
 		ID:       userID,
@@ -68,17 +69,17 @@ func (c *WebSocketController) handleConnection(ctx *gin.Context, userID uint, us
 		Conn:     conn,
 		Send:     make(chan []byte, 256),
 	}
-	
+
 	// 注册客户端
 	if !c.WSManager.RegisterClient(client) {
 		conn.Close()
 		ctx.JSON(http.StatusServiceUnavailable, gin.H{"error": "服务器已达到最大连接数"})
 		return
 	}
-	
+
 	// 订阅用户私聊频道
 	c.WSManager.SubscribeToUserChannel(userID)
-	
+
 	// 获取用户所在的群组
 	groups, err := c.UserService.GetUserGroups(userID)
 	if err == nil {
@@ -87,7 +88,7 @@ func (c *WebSocketController) handleConnection(ctx *gin.Context, userID uint, us
 			c.WSManager.SubscribeToGroupChannel(userID, group.ID)
 		}
 	}
-	
+
 	// 启动读写协程
 	go client.WritePump()
 	go client.ReadPump(c.WSManager, c.MessageService)

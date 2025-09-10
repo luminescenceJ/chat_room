@@ -293,3 +293,128 @@ func (c *GroupController) GetGroupMembers(ctx *gin.Context) {
 		"members": members,
 	})
 }
+
+// GetGroups 获取群组列表
+func (c *GroupController) GetGroups(ctx *gin.Context) {
+	// 从上下文中获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
+		return
+	}
+
+	// 获取用户群组
+	groups, err := c.GroupService.GetUserGroups(userID.(uint))
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"groups": groups,
+	})
+}
+
+// DeleteGroup 删除群组
+func (c *GroupController) DeleteGroup(ctx *gin.Context) {
+	// 从上下文中获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
+		return
+	}
+
+	// 获取群组ID参数
+	groupIDStr := ctx.Param("id")
+	groupID, err := strconv.ParseUint(groupIDStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的群组ID"})
+		return
+	}
+
+	// 删除群组（实际上是解散群组）
+	err = c.GroupService.DisbandGroup(uint(groupID), userID.(uint))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "群组删除成功",
+	})
+}
+
+// AddMember 添加群组成员
+func (c *GroupController) AddMember(ctx *gin.Context) {
+	// 从上下文中获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
+		return
+	}
+
+	// 获取群组ID参数
+	groupIDStr := ctx.Param("id")
+	groupID, err := strconv.ParseUint(groupIDStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的群组ID"})
+		return
+	}
+
+	var req struct {
+		UserID uint `json:"user_id" binding:"required"`
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
+		return
+	}
+
+	// 添加成员（需要检查权限）
+	err = c.GroupService.AddMember(uint(groupID), userID.(uint), req.UserID)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "成员添加成功",
+	})
+}
+
+// RemoveMember 移除群组成员
+func (c *GroupController) RemoveMember(ctx *gin.Context) {
+	// 从上下文中获取用户ID
+	userID, exists := ctx.Get("userID")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
+		return
+	}
+
+	// 获取群组ID参数
+	groupIDStr := ctx.Param("id")
+	groupID, err := strconv.ParseUint(groupIDStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的群组ID"})
+		return
+	}
+
+	// 获取要移除的用户ID
+	targetUserIDStr := ctx.Param("userId")
+	targetUserID, err := strconv.ParseUint(targetUserIDStr, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的用户ID"})
+		return
+	}
+
+	// 移除成员（需要检查权限）
+	err = c.GroupService.RemoveMember(uint(groupID), userID.(uint), uint(targetUserID))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message": "成员移除成功",
+	})
+}

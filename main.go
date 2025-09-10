@@ -33,7 +33,7 @@ func main() {
 	// 连接数据库
 	dsn := config.AppConfig.DBConnectionString
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+		Logger:      logger.Default.LogMode(logger.Silent),
 		PrepareStmt: true, // 缓存预编译语句
 	})
 	if err != nil {
@@ -71,11 +71,22 @@ func main() {
 	}
 	log.Println("Redis连接成功")
 
-	// 初始化消息服务
-	messageService := services.NewMessageService(db, rdb)
+	// 初始化用户服务
+	userService := services.NewUserService(db, rdb)
 
-	// 初始化WebSocket管理器（内部会创建Kafka服务）
-	wsManager := services.NewWebSocketManager(rdb, messageService)
+	// 初始化Kafka服务（允许失败）
+	kafkaService, err := services.NewKafkaService()
+	if err != nil {
+		log.Printf("警告: Kafka服务初始化失败: %v", err)
+		log.Println("应用将在没有Kafka的情况下运行（消息不会通过队列分发）")
+		kafkaService = nil
+	}
+
+	// 初始化消息服务
+	messageService := services.NewMessageService(db, rdb, userService, kafkaService)
+
+	// 初始化WebSocket管理器
+	wsManager := services.NewWebSocketManager(rdb, messageService, userService)
 	go wsManager.Run()
 
 	// 创建Gin实例
@@ -104,7 +115,7 @@ func main() {
 
 	// 优雅关闭
 	srv := services.StartServer(r, config.AppConfig.Port)
-	
+
 	// 等待中断信号以优雅地关闭服务器
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

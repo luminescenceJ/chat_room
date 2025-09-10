@@ -1,134 +1,258 @@
-# 高性能聊天室
+# 聊天室项目 (ChatRoom)
 
-这是一个基于Go语言的高性能聊天室应用，使用Kafka作为消息队列和Redis作为缓存系统，支持超高并发WebSocket连接和分布式部署。
+一个基于 Go 语言开发的实时聊天室应用，支持私聊和群聊功能。
 
-## 系统架构
+## 功能特性
 
-系统采用以下技术栈：
+- 🚀 实时消息传输（WebSocket）
+- 👥 用户注册和登录
+- 💬 私聊和群聊
+- 🏠 群组管理（创建、加入、离开）
+- 📱 在线用户状态
+- 🔄 消息持久化存储
+- ⚡ Redis 缓存优化
+- 📊 Kafka 消息队列
+- 🔐 JWT 身份验证
+- 🛡️ 请求限流
 
-- **后端框架**：Gin
-- **数据库**：MySQL
-- **消息队列**：Kafka
-- **缓存系统**：Redis
-- **WebSocket**：gorilla/websocket
-- **认证**：JWT
+## 技术栈
 
-## 性能优化
+- **后端框架**: Gin (Go)
+- **数据库**: MySQL + GORM
+- **缓存**: Redis
+- **消息队列**: Kafka
+- **实时通信**: WebSocket
+- **身份验证**: JWT
 
-相比原始版本，本项目进行了以下优化：
+## 项目结构
 
-1. **Kafka消息队列**：使用Kafka替代Go Channel，实现真正的分布式消息处理，支持水平扩展和超高并发
-2. **连接池优化**：
-   - 数据库连接池配置
-   - Redis连接池配置
-   - WebSocket连接管理优化
-3. **多级缓存**：
-   - 用户信息缓存
-   - 群组信息缓存
-   - 最近消息缓存
-4. **限流保护**：
-   - API请求限流
-   - WebSocket连接限流
-5. **异步处理**：
-   - 消息异步保存
-   - 状态异步更新
-6. **优雅关闭**：支持服务器优雅关闭，确保消息不丢失
-
-## 部署要求
-
-- Go 1.16+
-- MySQL 5.7+
-- Redis 6.0+
-- Kafka 2.8+
-- ZooKeeper 3.6+
-
-## 配置说明
-
-复制`.env.example`文件为`.env`，并根据实际情况修改配置：
-
-```bash
-cp .env.example .env
+```
+chatroom/
+├── api/                 # API 控制器
+│   ├── auth.go         # 认证相关
+│   ├── user.go         # 用户管理
+│   ├── message.go      # 消息处理
+│   ├── group.go        # 群组管理
+│   ├── websocket.go    # WebSocket 处理
+│   ├── monitor.go      # 监控接口
+│   └── routes.go       # 路由配置
+├── config/             # 配置管理
+│   └── config.go
+├── middleware/         # 中间件
+│   └── rate_limiter.go # 限流中间件
+├── models/             # 数据模型
+│   ├── user.go
+│   ├── message.go
+│   └── group.go
+├── services/           # 业务逻辑层
+│   ├── user_service.go
+│   ├── message_service.go
+│   ├── group_service.go
+│   ├── kafka_service.go
+│   ├── websocket_manager.go
+│   ├── websocket.go
+│   ├── client.go
+│   └── server.go
+├── .env.example        # 环境变量示例
+├── go.mod
+├── go.sum
+├── main.go
+└── README.md
 ```
 
-主要配置项说明：
+## 快速开始
 
-- `MAX_CONNECTIONS`：最大WebSocket连接数
-- `REDIS_POOL_SIZE`：Redis连接池大小
-- `DB_MAX_IDLE_CONNS`和`DB_MAX_OPEN_CONNS`：数据库连接池配置
-- `CACHE_EXPIRATION`：缓存过期时间（秒）
+### 方式一：最小化运行（推荐新手）
 
-## 启动服务
+如果你只想快速体验项目，可以使用最小化配置：
 
+1. **安装 Go 1.19+**
+
+2. **克隆项目并安装依赖**
+```bash
+git clone <项目地址>
+cd chatroom
+go mod tidy
+```
+
+3. **直接运行（使用默认配置）**
 ```bash
 go run main.go
 ```
 
-## 水平扩展
+项目会自动：
+- 使用 SQLite 内存数据库（无需安装 MySQL）
+- 跳过 Redis 和 Kafka（功能会降级但不影响基本使用）
+- 在 http://localhost:8080 启动服务
 
-本系统支持水平扩展，可以通过以下方式部署多个实例：
+### 方式二：完整功能运行
 
-1. 多个应用实例共享同一个Redis服务
-2. 使用负载均衡器（如Nginx）分发请求
-3. 会话状态通过Redis共享
+#### 1. 环境要求
+- Go 1.19+
+- MySQL 8.0+
+- Redis 6.0+
+- Kafka 2.8+（可选）
 
-## 性能测试
+#### 2. 安装依赖
+```bash
+go mod download
+```
 
-在分布式部署下，系统可以支持：
+#### 3. 配置环境变量
+复制并编辑配置文件：
+```bash
+cp .env.example .env
+# 编辑 .env 文件，配置数据库连接等信息
+```
 
-- 100,000+ 并发WebSocket连接
-- 每秒10,000+ 消息处理能力
-- 毫秒级消息延迟
+#### 4. 数据库初始化
+```sql
+CREATE DATABASE chatroom CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
 
-## 监控与维护
+#### 5. 启动服务
+```bash
+go run main.go
+```
 
-系统提供了以下监控端点：
+### 方式三：Docker 运行
 
-- `/api/monitor/system`：查看系统状态，包括内存使用、协程数量、Kafka指标等
-- `/api/monitor/connections`：查看当前WebSocket连接数
+使用 Docker Compose 一键启动所有服务：
+```bash
+docker-compose up -d
+```
 
-## 项目难点与重点
+服务将在 `http://localhost:8080` 启动。
 
-### 1. 高并发消息处理
+## API 接口
 
-- **难点**：在高并发场景下，如何保证消息的可靠传递和低延迟
-- **解决方案**：
-  - 使用Kafka作为消息队列，支持水平扩展和高吞吐量
-  - 消息分区和消费者组实现负载均衡
-  - 同步/异步发送策略：重要消息同步发送确保可靠性，非关键消息异步发送提高性能
+### 认证接口
 
-### 2. 分布式架构设计
+- `POST /api/register` - 用户注册
+- `POST /api/login` - 用户登录
 
-- **难点**：如何设计支持水平扩展的分布式聊天系统
-- **解决方案**：
-  - 无状态服务设计，便于部署多实例
-  - 使用Redis共享会话状态和在线用户信息
-  - Kafka消费者组自动负载均衡
-  - 主题分区策略优化：按用户ID和群组ID分区，确保消息顺序性
+### 用户接口
 
-### 3. 实时性与可靠性平衡
+- `GET /api/users` - 获取所有用户
+- `GET /api/users/:id` - 获取用户信息
+- `PUT /api/users/:id` - 更新用户信息
+- `GET /api/users/online` - 获取在线用户
 
-- **难点**：如何在保证消息实时性的同时确保可靠性
-- **解决方案**：
-  - WebSocket长连接保证实时通信
-  - 消息持久化到数据库和Kafka
-  - 消息确认机制和重试策略
-  - 优雅关闭确保消息不丢失
+### 消息接口
 
-### 4. 性能优化
+- `GET /api/messages` - 获取消息列表
+- `POST /api/messages` - 发送消息
+- `GET /api/messages/:id` - 获取单个消息
 
-- **难点**：如何优化系统性能，支持大量并发连接
-- **解决方案**：
-  - 连接池优化（数据库、Redis）
-  - 消息压缩和批处理
-  - 多级缓存策略
-  - 异步处理非关键操作
-  - 限流保护机制
+### 群组接口
 
-### 5. 监控与可观测性
+- `GET /api/groups` - 获取群组列表
+- `POST /api/groups` - 创建群组
+- `GET /api/groups/:id` - 获取群组信息
+- `PUT /api/groups/:id` - 更新群组信息
+- `DELETE /api/groups/:id` - 删除群组
+- `POST /api/groups/:id/members` - 添加群组成员
 
-- **难点**：如何实时监控系统状态，快速定位问题
-- **解决方案**：
-  - 系统指标收集（内存、协程数等）
-  - Kafka消息指标监控
-  - 连接数监控
-  - 错误日志和异常处理
+### WebSocket
+
+- `GET /api/ws` - WebSocket 连接
+
+## WebSocket 消息格式
+
+### 发送消息
+
+```json
+{
+  "type": "chat_message",
+  "content": {
+    "content": "Hello, World!",
+    "type": "text",
+    "receiver_id": 123,
+    "group_id": 0
+  },
+  "timestamp": "2023-01-01T00:00:00Z"
+}
+```
+
+### 接收消息
+
+```json
+{
+  "id": 1,
+  "content": "Hello, World!",
+  "type": "text",
+  "sender_id": 456,
+  "sender": {
+    "id": 456,
+    "username": "alice",
+    "avatar": "https://example.com/avatar.jpg",
+    "online": true
+  },
+  "receiver_id": 123,
+  "group_id": 0,
+  "created_at": "2023-01-01T00:00:00Z"
+}
+```
+
+## 部署
+
+### Docker 部署
+
+```bash
+# 构建镜像
+docker build -t chatroom .
+
+# 运行容器
+docker run -d \
+  --name chatroom \
+  -p 8080:8080 \
+  --env-file .env \
+  chatroom
+```
+
+### 生产环境配置
+
+1. 设置 `MODE=release`
+2. 配置强密码的 `JWT_SECRET`
+3. 使用生产级别的数据库和缓存配置
+4. 配置负载均衡和反向代理
+5. 启用 HTTPS
+
+## 监控
+
+应用提供了监控接口：
+
+- `GET /api/monitor/system` - 系统状态
+- `GET /api/monitor/connections` - 连接统计
+
+## 开发
+
+### 添加新功能
+
+1. 在 `models/` 中定义数据模型
+2. 在 `services/` 中实现业务逻辑
+3. 在 `api/` 中添加控制器
+4. 在 `api/routes.go` 中注册路由
+
+## 中间件
+
+### kafka
+```shell
+.\kafka-server-start.bat D:\lumin\kafka_2.13-4.0.0\config\server.properties
+```
+
+
+
+### 测试
+
+```bash
+go test ./...
+```
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 许可证
+
+MIT License

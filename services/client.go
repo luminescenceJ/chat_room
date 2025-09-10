@@ -36,7 +36,7 @@ func (c *Client) WritePump() {
 		ticker.Stop()
 		c.Conn.Close()
 	}()
-	
+
 	for {
 		select {
 		case message, ok := <-c.Send:
@@ -46,20 +46,20 @@ func (c *Client) WritePump() {
 				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			
+
 			w, err := c.Conn.NextWriter(websocket.TextMessage)
 			if err != nil {
 				return
 			}
 			w.Write(message)
-			
+
 			// 添加队列中的消息
 			n := len(c.Send)
 			for i := 0; i < n; i++ {
 				w.Write([]byte{'\n'})
 				w.Write(<-c.Send)
 			}
-			
+
 			if err := w.Close(); err != nil {
 				return
 			}
@@ -78,14 +78,14 @@ func (c *Client) ReadPump(wsManager *WebSocketManager, messageService *MessageSe
 		wsManager.UnregisterClient(c)
 		c.Conn.Close()
 	}()
-	
+
 	c.Conn.SetReadLimit(512 * 1024) // 512KB
 	c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.Conn.SetPongHandler(func(string) error {
 		c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
-	
+
 	for {
 		_, message, err := c.Conn.ReadMessage()
 		if err != nil {
@@ -94,7 +94,7 @@ func (c *Client) ReadPump(wsManager *WebSocketManager, messageService *MessageSe
 			}
 			break
 		}
-		
+
 		// 处理接收到的消息
 		go c.handleReceivedMessage(message, wsManager, messageService)
 	}
@@ -107,9 +107,9 @@ func (c *Client) handleReceivedMessage(message []byte, wsManager *WebSocketManag
 		log.Printf("解析消息失败: %v", err)
 		return
 	}
-	
+
 	ctx := context.Background()
-	
+
 	switch wsMsg.Type {
 	case "chat_message":
 		var msgReq models.MessageRequest
@@ -117,10 +117,10 @@ func (c *Client) handleReceivedMessage(message []byte, wsManager *WebSocketManag
 			log.Printf("解析聊天消息失败: %v", err)
 			return
 		}
-		
+
 		// 处理消息（保存到数据库并转发）
 		c.handleChatMessage(ctx, msgReq, wsManager, messageService)
-		
+
 	case "typing":
 		var typingData struct {
 			ReceiverID uint `json:"receiver_id"`
@@ -130,10 +130,10 @@ func (c *Client) handleReceivedMessage(message []byte, wsManager *WebSocketManag
 			log.Printf("解析typing消息失败: %v", err)
 			return
 		}
-		
+
 		// 处理typing通知
 		c.handleTypingNotification(ctx, typingData.ReceiverID, typingData.GroupID, wsManager)
-		
+
 	default:
 		log.Printf("未知消息类型: %s", wsMsg.Type)
 	}
@@ -141,7 +141,6 @@ func (c *Client) handleReceivedMessage(message []byte, wsManager *WebSocketManag
 
 // handleChatMessage 处理聊天消息
 func (c *Client) handleChatMessage(ctx context.Context, msgReq models.MessageRequest, wsManager *WebSocketManager, messageService *MessageService) {
-	// 保存消息到数据库
 	msg := &models.Message{
 		Content:    msgReq.Content,
 		Type:       msgReq.Type,
@@ -150,48 +149,12 @@ func (c *Client) handleChatMessage(ctx context.Context, msgReq models.MessageReq
 		GroupID:    msgReq.GroupID,
 		CreatedAt:  time.Now(),
 	}
-	
-	// 异步保存消息到数据库
+
 	go func() {
-		if err := messageService.SaveMessage(msg); err != nil {
-			log.Printf("保存消息失败: %v", err)
+		if err := messageService.ProcessMessage(msg); err != nil {
+			log.Printf("处理消息失败: %v", err)
 		}
 	}()
-	
-	// 获取发送者信息
-	sender, err := messageService.GetUserByID(c.ID)
-	if err != nil {
-		log.Printf("获取发送者信息失败: %v", err)
-		return
-	}
-	
-	// 创建消息响应
-	msgResp := models.MessageResponse{
-		ID:         msg.ID,
-		Content:    msg.Content,
-		Type:       msg.Type,
-		SenderID:   msg.SenderID,
-		Sender: models.UserResponse{
-			ID:       sender.ID,
-			Username: sender.Username,
-			Online:   true,
-		},
-		ReceiverID: msg.ReceiverID,
-		GroupID:    msg.GroupID,
-		CreatedAt:  msg.CreatedAt,
-	}
-	
-	// 序列化消息
-	msgJSON, _ := json.Marshal(msgResp)
-	
-	// 根据消息类型发送到Kafka
-	if msg.Type == models.PrivateMessage {
-		// 发布到Kafka私聊主题
-		wsManager.PublishMessage(ctx, "chat_message", msgJSON, msg.ReceiverID, 0)
-	} else if msg.Type == models.GroupMessage {
-		// 发布到Kafka群组主题
-		wsManager.PublishMessage(ctx, "chat_message", msgJSON, 0, msg.GroupID)
-	}
 }
 
 // handleTypingNotification 处理typing通知
@@ -207,9 +170,9 @@ func (c *Client) handleTypingNotification(ctx context.Context, receiverID, group
 		ReceiverID: receiverID,
 		GroupID:    groupID,
 	}
-	
+
 	typingJSON, _ := json.Marshal(typingData)
-	
+
 	if groupID > 0 {
 		// 发布到Kafka群组主题
 		wsManager.PublishMessage(ctx, "typing", typingJSON, 0, groupID)

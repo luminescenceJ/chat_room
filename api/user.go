@@ -7,7 +7,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"chatroom/models"
 	"chatroom/services"
 )
 
@@ -60,7 +59,11 @@ func (c *UserController) GetUserByID(ctx *gin.Context) {
 
 // GetOnlineUsers 获取在线用户
 func (c *UserController) GetOnlineUsers(ctx *gin.Context) {
-	onlineUsers := services.GlobalHub.GetOnlineUsers()
+	onlineUsers, err := c.UserService.GetOnlineUsers()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	ctx.JSON(http.StatusOK, gin.H{
 		"online_users": onlineUsers,
 	})
@@ -75,25 +78,45 @@ func (c *UserController) SearchUsers(ctx *gin.Context) {
 		return
 	}
 
-	// 这里应该调用用户服务的搜索方法
-	// 简化处理，返回所有用户
-	users, err := c.UserService.GetAllUsers()
+	users, err := c.UserService.SearchUsers(query)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 过滤用户
-	var filteredUsers []models.UserResponse
-	for _, user := range users {
-		// 简单的字符串匹配
-		if contains(user.Username, query) || contains(user.Email, query) {
-			filteredUsers = append(filteredUsers, user)
-		}
+	ctx.JSON(http.StatusOK, gin.H{
+		"users": users,
+	})
+}
+
+// UpdateUser 更新用户信息
+func (c *UserController) UpdateUser(ctx *gin.Context) {
+	userID := ctx.Param("id")
+	id, err := strconv.ParseUint(userID, 10, 32)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的用户ID"})
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+		Email    string `json:"email"`
+		Avatar   string `json:"avatar"`
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
+		return
+	}
+
+	user, err := c.UserService.UpdateUser(uint(id), req.Username, req.Email, req.Avatar)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
-		"users": filteredUsers,
+		"user": user,
 	})
 }
 

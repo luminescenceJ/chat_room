@@ -1,0 +1,82 @@
+### 用户注册
+POST http://localhost:8080/api/register
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "password123",
+  "email": "test@example.com"
+}
+
+### 用户登录
+POST http://localhost:8080/api/login
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "password123"
+}
+
+### 获取所有用户 (需要 JWT Token)
+GET http://localhost:8080/api/users
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+### 获取在线用户
+GET http://localhost:8080/api/users/online
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+### 发送消息
+POST http://localhost:8080/api/messages
+Content-Type: application/json
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+{
+  "content": "Hello, World!",
+  "type": "text",
+  "receiver_id": 2,
+  "group_id": 0
+}
+
+### 获取消息
+GET http://localhost:8080/api/login
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+### 获取消息
+GET http://localhost:8080/api/messages?type=private&target_id=2&limit=20&offset=0
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+### 创建群组
+POST http://localhost:8080/api/groups
+Content-Type: application/json
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+{
+  "name": "测试群组",
+  "description": "这是一个测试群组",
+  "avatar": "https://example.com/group-avatar.jpg"
+}
+
+### 获取群组列表
+GET http://localhost:8080/api/groups
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+### 系统监控
+GET http://localhost:8080/api/monitor/system
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+### 添加群组成员
+POST http://localhost:8080/api/groups/1/members
+Content-Type: application/json
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+{
+  "user_id": 3
+}
+
+### 移除群组成员
+DELETE http://localhost:8080/api/groups/1/members/3
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
+
+### 连接统计
+GET http://localhost:8080/api/monitor/connections
+Authorization: Bearer YOUR_JWT_TOKEN_HERE
